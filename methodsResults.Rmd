@@ -1,0 +1,51 @@
+---
+title: "Survival Modeling of Educational Attainment for Deaf Veterans"
+output:
+    word_document:
+      reference_docx: mystyles.docx
+---
+
+```{r loadPackages,include=FALSE,cache=FALSE}
+library(lmtest)
+library(tidyverse)
+library(splines)
+library(reshape2)
+
+source('functions.r')
+source('../generalCode/estimationFunctions.r')
+
+load('vetSurvData.RData')
+dat <- filter(dat,agep>=25)
+
+```
+
+
+# Data
+The data were taken from the American Community Survey 5-year sample,
+from years 2013-2017. The primary variables of interest measured
+veteran status, service-related deafness, and postsecondary
+educational attanment.
+These were measured by responses to the following survey items:
+- **veteran status**: "Has this person ever served on active duty in the
+  U.S. Armed Forces, Reserves, or National Guard?" For this study,
+  veterans were those who responded "On active duty in the past, but
+  not now."
+- **service-related deafness**: a person was considered to have
+  service-related deafness if he or she gave positive
+  responses to _both_ "Is this person deaf or does he/she
+  haveserious difficulty hearing?" and "Does this person have a VA
+  service-connecteddisability rating?" and did not list any other
+  disability (specifically,
+  vision, self-care, independent living, ambulatory, or cognitive
+  difficulty).
+- **educational attainment**: "What is the highest degree or level of
+schoolthis person has COMPLETED?" combined with "At any time IN THE
+LAST 3 MONTHS, has this person attended school or college?" as an
+indicator of current enrollment.
+
+In secondary analyses, we subsets of veterans with more severe
+service-related deafness, or who served in the military after
+September 11, 2001. These were defined by, respectively,
+- responding "70 percent or higher" (the highest category) to the question "  What is this
+  person’s service-connecteddisability rating?"
+- responding "September, 2001 or later" to the question "When did this person serve on active duty in theU.S. Armed Forces?"
