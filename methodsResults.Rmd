@@ -49,3 +49,4 @@ September 11, 2001. These were defined by, respectively,
 - responding "70 percent or higher" (the highest category) to the question "  What is this
   person’s service-connecteddisability rating?"
 - responding "September, 2001 or later" to the question "When did this person serve on active duty in theU.S. Armed Forces?"
+
