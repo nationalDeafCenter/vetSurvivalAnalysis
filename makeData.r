@@ -18,8 +18,7 @@ states <- read.csv('../../../data/states.csv')
 varNames <- c('ST','AGEP','DDRS','DEAR','DEYE','DOUT','DPHY','DRATX','DREM','DRAT','FDEARP','ESR','SCHL','SCH','SCHG','RAC1P','HISP','SEX','PERNP','PINCP','SSIP','WKHP','WKW','ADJINC','PWGTP','RELP','DRAT','MIL','NATIVITY','POBP','QTRBIR','VPS',
   'WAOB',
               paste0('MLP',c('A','B','CD','E','FG',LETTERS[8:11])),
-              paste0('pwgtp',1:80))
-
+              paste0('PWGTP',1:80))
 
 ctypes <- rep('i',length(varNames))
 names(ctypes) <- varNames
@@ -28,7 +27,7 @@ colTypes <- do.call('cols',as.list(ctypes))
 
 dat <- read_csv('../../../data/acs5yr2017/psam_pusa.csv',col_types=colTypes)
 dim(dat)
-setdiff(varNames,names(dat))
+
 setdiff(names(dat),varNames)
 
 for(ll in c('b','c','d'))
@@ -133,7 +132,7 @@ dat <- dat%>%filter(agep>17,agep<55,mil==2)%>% ## mil==2 => only vets in dataset
     sex=ifelse(sex==1,'Male','Female'))
 gc()
 
-dat <- dat%>%filter((deaf=='deaf'&dratx==1)|(deaf=='hearing'&dratx==2))
+dat <- dat%>%filter(diss=='nondisabled')#,(deaf=='deaf'&dratx==1)|(deaf=='hearing'&dratx==2))
 
 save(dat,file='vetSurvData.RData')
 gc()

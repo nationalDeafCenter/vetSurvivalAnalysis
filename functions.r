@@ -58,7 +58,8 @@ model <- function(formula=event~level-1,data,surveySEs=FALSE,returnReps=FALSE,cl
 }
 
 
-plotBase <- function(mod,ldat){
+plotBase <- function(mod){
+  ldat <- droplevels(mod$data)
   pdat <-
     tibble(
       level=factor(levels(ldat$level),
@@ -75,12 +76,15 @@ plotBase <- function(mod,ldat){
     facet_wrap(~measure,scales="free_y")
 }
 
-survivalHazard <- function(mod,ldat){
+survivalHazard <- function(mod,recent=NULL){
+ ldat <- droplevels(mod$data)
  pdat <-
     expand.grid(
       level=factor(levels(ldat$level),
         levels=levels(ldat$level)),
       deaf=factor(levels(ldat$deaf)))
+
+ pdat$recentVet <- recent
 
   moreVars <- setdiff(names(get_all_vars(mod$formula,mod$data)),c('event',names(pdat)))
   if(length(moreVars)){
@@ -98,9 +102,23 @@ survivalHazard <- function(mod,ldat){
     select(-logitHazard)%>%ungroup()
 }
 
-plotInt <- function(mod,ldat,reverse=FALSE){
+shTab <- function(mod,varb,recent){
+  sh <- survivalHazard(mod,recent)%>%
+    select(level,deaf,hazard,overallAttainment=attainment)%>%
+    mutate(advanceProb=1-hazard)%>%
+    select(hazard,advanceProb,overallAttainment,everything())
+  if(!missing(varb)){
+    sh <- sh[,c(varb,'level','deaf')]
+    if(length(varb)==1) return(spread(sh,deaf,which(names(sh)==varb)))
+  }
+  sh%>%
+    melt()%>%
+    dcast(level~variable+deaf)
+}
 
-  pdat <- survivalHazard(mod,ldat)
+plotInt <- function(mod,reverse=FALSE){
+
+  pdat <- survivalHazard(mod)
 
   if(reverse){
     pdat$advanceProb <- 1-pdat$hazard
@@ -115,7 +133,8 @@ plotInt <- function(mod,ldat,reverse=FALSE){
 
 
 
-plotDiff <- function(mod,ldat){
+plotDiff <- function(mod){
+  ldat <- droplevels(mod$data)
   pdat <-
     expand.grid(
       level=factor(levels(ldat$level),
@@ -144,7 +163,8 @@ varSum <- function(index,vcv){
   (t(index)%*%vcv%*%index)[1,1]
 }
 
-hazardOddsRatios <- function(mod,ldat,age=0){
+hazardOddsRatios <- function(mod,age=0){
+  ldat <- mod$data
   rownames(mod$vcov) <- colnames(mod$vcov) <- names(coef(mod))
   diffs <- list()
   vars <- list()
@@ -196,15 +216,104 @@ plotAge <- function(mod){
   )
   moreVars <- setdiff(names(get_all_vars(mod$formula,mod$data)),c('event',names(pdat)))
   if(length(moreVars)){
-    for(vv in moreVars) pdat[[vv]] <-
-                          if(is.factor(mod$data[[vv]])){
-                            levels(mod$data[[vv]])[1]
-                          } else if(is.character(mod$data[[vv]])){
-                            sort(unique(mod$data[[vv]]))[1]
-                          } else if(is.logical(mod$data[[vv]])) FALSE else 0
+      for(vv in moreVars)
+          pdat[[vv]] <-
+              if(is.factor(mod$data[[vv]])){
+                  levels(mod$data[[vv]])[1]
+              } else if(is.character(mod$data[[vv]])){
+                  sort(unique(mod$data[[vv]]))[1]
+              } else if(is.logical(mod$data[[vv]])) FALSE else 0
   }
   pdat$ageEff <- predict(mod,pdat)
   pdat$ageEff[pdat$deaf=='hearing'] <- pdat$ageEff[pdat$deaf=='hearing']-coef(mod)['deafhearing']
   pdat$age=pdat$ageCentered+35
   ggplot(pdat,aes(age,ageEff,color=deaf))+geom_line()
 }
+
+brTotal <- function(mod,...)
+    binnedplot(predict(mod,type='response'),resid(mod,type='response'),wts=weights(mod),...)
+
+
+brOneDiscrete <- function(mod,varName){
+    mf <- model.frame(mod)
+    mf$x <- mf[[varName]]
+    if(!is.element('deaf',names(mf))) mf$deaf <- 'deaf'
+    mf%>%
+      mutate(resid=resid(mod,type='response'))%>%
+      select(resid,x,deaf)%>%
+      group_by(x,deaf)%>%
+      summarize(
+        residBar=mean(resid),
+        sdResid=sd(resid),
+        hi=residBar+2*sdResid/sqrt(n()),
+        low=residBar-2*sdResid/sqrt(n())
+      )%>%
+    ggplot(aes(x,residBar,color=deaf))+
+      geom_point(position=position_dodge(.1))+
+      geom_errorbar(aes(ymin=low,ymax=hi),width=0,position=position_dodge(.1))+
+      geom_hline(yintercept=0)+
+      theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+
+      xlab(varName)
+}
+
+brDiscrete <- function(mod){
+    mf <- model.frame(mod)
+    weights <- mf[['(weights)']]
+    mf <- mf[,map_lgl(mf,~ !is.numeric(.)|n_distinct(.)<10)]
+    mf%>%
+        mutate(resid=resid(mod,type='response'))%>%
+        select(-event)%>%
+        gather("predictor","value",-resid)%>%
+        group_by(predictor,value)%>%
+        summarize(
+          residBar=sum(resid*weights)/sum(weights),
+          sdResid=.5,#sd(resid),
+          hi=residBar+2*sdResid/sqrt(n()),
+          low=residBar-2*sdResid/sqrt(n())
+        )%>%
+    ggplot(aes(value,residBar))+
+      geom_point()+
+      geom_errorbar(aes(ymin=low,ymax=hi),width=0)+
+      geom_hline(yintercept=0)+
+      theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+
+      facet_wrap(~predictor,scale="free_x")
+}
+
+brCts <- function(mod){
+    mf <- model.frame(mod)
+    wts <- mf[['(weights)']]
+    mf[['(weights)']] <- NULL
+    sv <- grep('ns\\(',names(mf),value=TRUE)
+    if(length(sv)){
+        sv <- map_chr(strsplit(sv,'(ns\\()|\\,'),~.[2])
+        mf <- cbind(mf,mod$data[rownames(mf),sv])
+        mf <- mf%>%select(-starts_with("ns"))
+    }
+    resids <- resid(mod,type='response')
+    pdat <-
+      map_dfr(
+        names(mf)[map_lgl(mf,~is.numeric(.)&n_distinct(.)>9)],
+        function(nm){
+            xcut <- makeBreaks(mf[[nm]])
+            mf%>%
+              mutate(xcut=makeBreaks(mf[[nm]]),y=resids,wts=wts,x=!!sym(nm))%>%
+              group_by(xcut,deaf)%>%
+              summarize(
+                  xbar=sum(x*wts)/sum(wts),
+                  ybar=sum(y*wts)/sum(wts),
+                  n=n(),
+                  x.lo=min(x),
+                  x.hi=max(x),
+                  moe=1/sqrt(n),
+                  predictor=nm)
+        }
+    )
+
+  ggplot(pdat,aes(xbar,ybar,color=deaf,fill=deaf,group=deaf))+
+      geom_point()+
+      geom_line(aes(xbar,-moe))+
+      geom_line(aes(xbar,+moe))+
+      geom_hline(yintercept=0)+
+      facet_wrap(~predictor,scale="free_x")
+}
+
