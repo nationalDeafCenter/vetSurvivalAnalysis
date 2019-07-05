@@ -68,7 +68,7 @@ results <-
     severe=full(filter(dat,(drat==5)|(deaf=='hearing')),FALSE)
   )
 
-system('mv fittedModels/results* fittedModels/old')
+system('mv fittedModels/*.RData fittedModels/old')
 
 save(results,file=paste0('fittedModels/results',Sys.Date(),'.RData'))
 
@@ -87,9 +87,11 @@ tables <- map(results,makeSheet)
 tables$recent <- add_case(tables$recent, level='SAMPLE: Post-9/11 vets')
 tables$severe <- add_case(tables$severe,level=c('DEFINITION: deaf= only 70+ rating'))
 
-system('mv output/* output/old')
+system('mv output/*.xlsx output/old')
 
 openxlsx::write.xlsx(tables,paste0('output/resultsTables',Sys.Date(),'.xlsx'))
+
+system('mv output/*.pdf output/old')
 
 plotInt(results$total$mod,reverse=TRUE,recent=TRUE)
 ggsave(paste0('output/full',Sys.Date(),'.pdf'),width=10,height=6)
