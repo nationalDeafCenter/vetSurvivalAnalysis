@@ -1,5 +1,6 @@
-library(lmtest)
-library(tidyverse)
+select <- dplyr::select
+
+
 transformData <- function(dat){
   dat$postSec <- droplevels(dat$postSec)
   dat$id <- 1:nrow(dat)
@@ -76,15 +77,15 @@ plotBase <- function(mod){
     facet_wrap(~measure,scales="free_y")
 }
 
-survivalHazard <- function(mod,recent=NULL){
- ldat <- droplevels(mod$data)
- pdat <-
+survivalHazard <- function(mod,recent=NULL,centeringAge=NULL){
+  ldat <- droplevels(mod$data)
+  pdat <-
     expand.grid(
       level=factor(levels(ldat$level),
         levels=levels(ldat$level)),
       deaf=factor(levels(ldat$deaf)))
 
- pdat$recentVet <- recent
+  pdat$recentVet <- recent
 
   moreVars <- setdiff(names(get_all_vars(mod$formula,mod$data)),c('event',names(pdat)))
   if(length(moreVars)){
@@ -95,15 +96,26 @@ survivalHazard <- function(mod,recent=NULL){
                             sort(unique(mod$data[[vv]]))[1]
                           } else if(is.logical(mod$data[[vv]])) FALSE else 0
   }
+  forWhom <- tibble(
+    predictor=setdiff(names(pdat),'level'),
+    value=map_chr(predictor,~paste(unique(pdat[[.]]),collapse=', ')))
+  if(!is.null(centeringAge))
+    forWhom[forWhom[,'predictor']=='ageCentered',] <- c('age',centeringAge)
+
   pdat$logitHazard <- predict(mod,pdat)#,type='link')
   pdat$hazard <- plogis(pdat$logitHazard)
-  pdat%>%group_by(deaf)%>%
+  out <- pdat%>%group_by(deaf)%>%
     mutate(attainment=sapply(1:n(),function(i) prod(1-hazard[1:i])))%>%
     select(-logitHazard)%>%ungroup()
+  attr(out,"forWhom") <- forWhom
+
+  out
 }
 
-shTab <- function(mod,varb,recent){
-  sh <- survivalHazard(mod,recent)%>%
+shTab <- function(mod,varb,recent=NULL,centeringAge=NULL){
+  sh <- survivalHazard(mod,recent,centeringAge)
+  forWhom <- attr(sh,"forWhom")
+  sh <- sh%>%
     select(level,deaf,hazard,overallAttainment=attainment)%>%
     mutate(advanceProb=1-hazard)%>%
     select(hazard,advanceProb,overallAttainment,everything())
@@ -111,23 +123,33 @@ shTab <- function(mod,varb,recent){
     sh <- sh[,c(varb,'level','deaf')]
     if(length(varb)==1) return(spread(sh,deaf,which(names(sh)==varb)))
   }
-  sh%>%
+  out <-
+    sh%>%
     melt()%>%
     dcast(level~variable+deaf)
+  attr(out,"forWhom") <- forWhom
+  out
 }
 
-plotInt <- function(mod,reverse=FALSE){
+plotInt <- function(mod,reverse=FALSE,recent=TRUE){
 
-  pdat <- survivalHazard(mod)
+  pdat <- survivalHazard(mod,recent=recent)
 
   if(reverse){
     pdat$advanceProb <- 1-pdat$hazard
-    pdat <- gather(pdat,"measure","est",advanceProb,attainment)
+    pdat <- gather(pdat,"measure","est",advanceProb,attainment)%>%
+      mutate(
+        measure=
+          c(advanceProb="Probability of Advancement",
+            attainment="Probability of Attainment")[measure]
+      )
+
   } else pdat <- gather(pdat,"measure","est",hazard,attainment)
 
   ggplot(pdat,aes(x=level,y=est,group=deaf,color=deaf))+geom_point()+geom_line()+
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
-    facet_wrap(~measure,scales="free_y")
+    facet_wrap(~measure,scales="free_y")+
+    labs(x=NULL,y=NULL,group=NULL,color=NULL)
 }
 
 
@@ -202,6 +224,7 @@ hazardOddsRatios <- function(mod,age=0){
   ggplot(pdat,aes(level,hazardRatio,group=gr))+
     geom_point()+geom_line()+
     geom_errorbar(aes(ymin=ciL,ymax=ciH),width=0.1)+
+    scale_y_continuous(breaks=seq(0,ceiling(max(pdat$hazardRatio)),.25))+
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
     xlab(NULL)+ylab('Hazard Odds Ratio deaf/hearing')+
     geom_hline(yintercept=1)
