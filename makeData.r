@@ -115,7 +115,7 @@ dat <- dat%>%filter(agep>17,agep<55,mil==2)%>% ## mil==2 => only vets in dataset
     enrolled=sch>1,
 
     nativeBorn=nativity==1,
-
+    foreignBorn=nativity==2,
 
     employment=factor(ifelse(esr%in%c(1,2,4,5),'Employed',
       ifelse(esr==3,'Unemployed','Not In Labor Force'))),

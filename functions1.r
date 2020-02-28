@@ -1,6 +1,5 @@
-select <- dplyr::select
-
-
+library(lmtest)
+library(tidyverse)
 transformData <- function(dat){
   dat$postSec <- droplevels(dat$postSec)
   dat$id <- 1:nrow(dat)
@@ -59,8 +58,7 @@ model <- function(formula=event~level-1,data,surveySEs=FALSE,returnReps=FALSE,cl
 }
 
 
-plotBase <- function(mod){
-  ldat <- droplevels(mod$data)
+plotBase <- function(mod,ldat){
   pdat <-
     tibble(
       level=factor(levels(ldat$level),
@@ -77,15 +75,12 @@ plotBase <- function(mod){
     facet_wrap(~measure,scales="free_y")
 }
 
-survivalHazard <- function(mod,recent=NULL,centeringAge=NULL){
-  ldat <- droplevels(mod$data)
-  pdat <-
+survivalHazard <- function(mod,ldat){
+ pdat <-
     expand.grid(
       level=factor(levels(ldat$level),
         levels=levels(ldat$level)),
       deaf=factor(levels(ldat$deaf)))
-
-  pdat$recentVet <- recent
 
   moreVars <- setdiff(names(get_all_vars(mod$formula,mod$data)),c('event',names(pdat)))
   if(length(moreVars)){
@@ -96,73 +91,45 @@ survivalHazard <- function(mod,recent=NULL,centeringAge=NULL){
                             sort(unique(mod$data[[vv]]))[1]
                           } else if(is.logical(mod$data[[vv]])) FALSE else 0
   }
-  forWhom <- tibble(
-    predictor=setdiff(names(pdat),'level'),
-    value=map_chr(predictor,~paste(unique(pdat[[.]]),collapse=', ')))
-  if(!is.null(centeringAge))
-    forWhom[forWhom[,'predictor']=='ageCentered',] <- c('age',centeringAge)
-
   pdat$logitHazard <- predict(mod,pdat)#,type='link')
   pdat$hazard <- plogis(pdat$logitHazard)
-  out <- pdat%>%group_by(deaf)%>%
+  pdat%>%group_by(deaf)%>%
     mutate(attainment=sapply(1:n(),function(i) prod(1-hazard[1:i])))%>%
     select(-logitHazard)%>%ungroup()
-  attr(out,"forWhom") <- forWhom
-
-  out
 }
 
-shTab <- function(mod,varb,recent=NULL,centeringAge=NULL){
-  sh <- survivalHazard(mod,recent,centeringAge)
-  forWhom <- attr(sh,"forWhom")
-  sh <- sh%>%
+shTab <- function(mod,ldat,varb){
+  sh <- survivalHazard(modFull,ldat)%>%
     select(level,deaf,hazard,overallAttainment=attainment)%>%
     mutate(advanceProb=1-hazard)%>%
-    group_by(deaf)%>%
-    mutate(
-      attainmentIfStartCollege=
-        ifelse(level=='HS',NA,overallAttainment/overallAttainment[level=="Some college, but less than 1 year"])
-    )%>%
-    ungroup()%>%
     select(hazard,advanceProb,overallAttainment,everything())
   if(!missing(varb)){
     sh <- sh[,c(varb,'level','deaf')]
     if(length(varb)==1) return(spread(sh,deaf,which(names(sh)==varb)))
   }
-  out <-
-    sh%>%
+  sh%>%
     melt()%>%
     dcast(level~variable+deaf)
-  attr(out,"forWhom") <- forWhom
-  out
 }
 
-plotInt <- function(mod,reverse=FALSE,recent=TRUE){
+plotInt <- function(mod,ldat,reverse=FALSE){
 
-  pdat <- survivalHazard(mod,recent=recent)
+  pdat <- survivalHazard(mod,ldat)
 
   if(reverse){
     pdat$advanceProb <- 1-pdat$hazard
-    pdat <- gather(pdat,"measure","est",advanceProb,attainment)%>%
-      mutate(
-        measure=
-          c(advanceProb="Probability of Advancement",
-            attainment="Probability of Attainment")[measure]
-      )
-
+    pdat <- gather(pdat,"measure","est",advanceProb,attainment)
   } else pdat <- gather(pdat,"measure","est",hazard,attainment)
 
   ggplot(pdat,aes(x=level,y=est,group=deaf,color=deaf))+geom_point()+geom_line()+
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
-    facet_wrap(~measure,scales="free_y")+
-    labs(x=NULL,y=NULL,group=NULL,color=NULL)
+    facet_wrap(~measure,scales="free_y")
 }
 
 
 
 
-plotDiff <- function(mod){
-  ldat <- droplevels(mod$data)
+plotDiff <- function(mod,ldat){
   pdat <-
     expand.grid(
       level=factor(levels(ldat$level),
@@ -191,8 +158,7 @@ varSum <- function(index,vcv){
   (t(index)%*%vcv%*%index)[1,1]
 }
 
-hazardOddsRatios <- function(mod,age=0,returnData=FALSE){
-  ldat <- mod$data
+hazardOddsRatios <- function(mod,ldat,age=0){
   rownames(mod$vcov) <- colnames(mod$vcov) <- names(coef(mod))
   diffs <- list()
   vars <- list()
@@ -226,13 +192,10 @@ hazardOddsRatios <- function(mod,age=0,returnData=FALSE){
     hazardRatio=diffs,
     ciL=cis[1,],
     ciH=cis[2,],
-    gr=1,
-    Age=age)
-  if(returnData) return(pdat)
+    gr=1)
   ggplot(pdat,aes(level,hazardRatio,group=gr))+
     geom_point()+geom_line()+
     geom_errorbar(aes(ymin=ciL,ymax=ciH),width=0.1)+
-    scale_y_continuous(breaks=seq(0,ceiling(max(pdat$hazardRatio)),.25))+
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
     xlab(NULL)+ylab('Hazard Odds Ratio deaf/hearing')+
     geom_hline(yintercept=1)
@@ -247,104 +210,15 @@ plotAge <- function(mod){
   )
   moreVars <- setdiff(names(get_all_vars(mod$formula,mod$data)),c('event',names(pdat)))
   if(length(moreVars)){
-      for(vv in moreVars)
-          pdat[[vv]] <-
-              if(is.factor(mod$data[[vv]])){
-                  levels(mod$data[[vv]])[1]
-              } else if(is.character(mod$data[[vv]])){
-                  sort(unique(mod$data[[vv]]))[1]
-              } else if(is.logical(mod$data[[vv]])) FALSE else 0
+    for(vv in moreVars) pdat[[vv]] <-
+                          if(is.factor(mod$data[[vv]])){
+                            levels(mod$data[[vv]])[1]
+                          } else if(is.character(mod$data[[vv]])){
+                            sort(unique(mod$data[[vv]]))[1]
+                          } else if(is.logical(mod$data[[vv]])) FALSE else 0
   }
   pdat$ageEff <- predict(mod,pdat)
   pdat$ageEff[pdat$deaf=='hearing'] <- pdat$ageEff[pdat$deaf=='hearing']-coef(mod)['deafhearing']
   pdat$age=pdat$ageCentered+35
   ggplot(pdat,aes(age,ageEff,color=deaf))+geom_line()
 }
-
-brTotal <- function(mod,...)
-    binnedplot(predict(mod,type='response'),resid(mod,type='response'),wts=weights(mod),...)
-
-
-brOneDiscrete <- function(mod,varName){
-    mf <- model.frame(mod)
-    mf$x <- mf[[varName]]
-    if(!is.element('deaf',names(mf))) mf$deaf <- 'deaf'
-    mf%>%
-      mutate(resid=resid(mod,type='response'))%>%
-      select(resid,x,deaf)%>%
-      group_by(x,deaf)%>%
-      summarize(
-        residBar=mean(resid),
-        sdResid=sd(resid),
-        hi=residBar+2*sdResid/sqrt(n()),
-        low=residBar-2*sdResid/sqrt(n())
-      )%>%
-    ggplot(aes(x,residBar,color=deaf))+
-      geom_point(position=position_dodge(.1))+
-      geom_errorbar(aes(ymin=low,ymax=hi),width=0,position=position_dodge(.1))+
-      geom_hline(yintercept=0)+
-      theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+
-      xlab(varName)
-}
-
-brDiscrete <- function(mod){
-    mf <- model.frame(mod)
-    weights <- mf[['(weights)']]
-    mf <- mf[,map_lgl(mf,~ !is.numeric(.)|n_distinct(.)<10)]
-    mf%>%
-        mutate(resid=resid(mod,type='response'))%>%
-        select(-event)%>%
-        gather("predictor","value",-resid)%>%
-        group_by(predictor,value)%>%
-        summarize(
-          residBar=sum(resid*weights)/sum(weights),
-          sdResid=.5,#sd(resid),
-          hi=residBar+2*sdResid/sqrt(n()),
-          low=residBar-2*sdResid/sqrt(n())
-        )%>%
-    ggplot(aes(value,residBar))+
-      geom_point()+
-      geom_errorbar(aes(ymin=low,ymax=hi),width=0)+
-      geom_hline(yintercept=0)+
-      theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+
-      facet_wrap(~predictor,scale="free_x")
-}
-
-brCts <- function(mod){
-    mf <- model.frame(mod)
-    wts <- mf[['(weights)']]
-    mf[['(weights)']] <- NULL
-    sv <- grep('ns\\(',names(mf),value=TRUE)
-    if(length(sv)){
-        sv <- map_chr(strsplit(sv,'(ns\\()|\\,'),~.[2])
-        mf <- cbind(mf,mod$data[rownames(mf),sv])
-        mf <- mf%>%select(-starts_with("ns"))
-    }
-    resids <- resid(mod,type='response')
-    pdat <-
-      map_dfr(
-        names(mf)[map_lgl(mf,~is.numeric(.)&n_distinct(.)>9)],
-        function(nm){
-            xcut <- makeBreaks(mf[[nm]])
-            mf%>%
-              mutate(xcut=makeBreaks(mf[[nm]]),y=resids,wts=wts,x=!!sym(nm))%>%
-              group_by(xcut,deaf)%>%
-              summarize(
-                  xbar=sum(x*wts)/sum(wts),
-                  ybar=sum(y*wts)/sum(wts),
-                  n=n(),
-                  x.lo=min(x),
-                  x.hi=max(x),
-                  moe=1/sqrt(n),
-                  predictor=nm)
-        }
-    )
-
-  ggplot(pdat,aes(xbar,ybar,color=deaf,fill=deaf,group=deaf))+
-      geom_point()+
-      geom_line(aes(xbar,-moe))+
-      geom_line(aes(xbar,+moe))+
-      geom_hline(yintercept=0)+
-      facet_wrap(~predictor,scale="free_x")
-}
-
